@@ -1,7 +1,8 @@
 from typing import List
 import pandas as pd
 from pydantic import BaseModel, Field
-from services.llm_factory import LLMFactory
+from services.llm_factory import AsyncLLMFactory
+from langfuse import observe    
 
 
 class SynthesizedResponse(BaseModel):
@@ -34,7 +35,8 @@ class Synthesizer:
     """
 
     @staticmethod
-    def generate_response(question: str, context: pd.DataFrame) -> SynthesizedResponse:
+    @observe()
+    async def generate_response(question: str, context: pd.DataFrame) -> SynthesizedResponse:
         """Generates a synthesized response based on the question and context.
 
         Args:
@@ -57,8 +59,8 @@ class Synthesizer:
             },
         ]
 
-        llm = LLMFactory("openai")
-        return llm.create_completion(
+        llm = AsyncLLMFactory("openai")
+        return await llm.create_completion(
             response_model=SynthesizedResponse,
             messages=messages,
         )
@@ -78,4 +80,11 @@ class Synthesizer:
         Returns:
             str: A JSON string representation of the selected columns.
         """
-        return context[columns_to_keep].to_json(orient="records", indent=2)
+        # Original — crashes if a column listed in columns_to_keep doesn't exist in the DataFrame
+        # return context[columns_to_keep].to_json(orient="records", indent=2)
+
+        # Updated — only keeps columns that actually exist in the DataFrame.
+        # This makes the Synthesizer work with any data source — FAQ data has
+        # "category", document chunks don't. Filtering avoids KeyError on missing columns.
+        existing_columns = [col for col in columns_to_keep if col in context.columns]
+        return context[existing_columns].to_json(orient="records", indent=2)

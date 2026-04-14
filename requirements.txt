@@ -5,3 +5,12 @@ python-dotenv
 timescale-vector
 instructor
 anthropic
+langfuse
+docling
+docling-core
+tiktoken
+fastapi
+uvicorn[standard]
+python-multipart
+celery[redis]
+redis

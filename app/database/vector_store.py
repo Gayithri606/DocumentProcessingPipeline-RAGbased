@@ -5,8 +5,9 @@ from datetime import datetime
 
 import pandas as pd
 from config.settings import get_settings
-from openai import OpenAI
+from langfuse.openai import OpenAI,AsyncOpenAI
 from timescale_vector import client
+from langfuse import observe  
 
 
 class VectorStore:
@@ -16,6 +17,7 @@ class VectorStore:
         """Initialize the VectorStore with settings, OpenAI client, and Timescale Vector client."""
         self.settings = get_settings()
         self.openai_client = OpenAI(api_key=self.settings.openai.api_key)
+        self.async_openai_client = AsyncOpenAI(api_key=self.settings.openai.api_key)
         self.embedding_model = self.settings.openai.embedding_model
         self.vector_settings = self.settings.vector_store
         self.vec_client = client.Sync(
@@ -24,7 +26,14 @@ class VectorStore:
             self.vector_settings.embedding_dimensions,
             time_partition_interval=self.vector_settings.time_partition_interval,
         )
+        self.async_vec_client = client.Async(          # ← ADD — query route uses this
+            self.settings.database.service_url,
+            self.vector_settings.table_name,
+            self.vector_settings.embedding_dimensions,
+            time_partition_interval=self.vector_settings.time_partition_interval,
+        )
 
+    @observe()
     def get_embedding(self, text: str) -> List[float]:
         """
         Generate embedding for the given text.
@@ -45,6 +54,42 @@ class VectorStore:
             .data[0]
             .embedding
         )
+        elapsed_time = time.time() - start_time
+        logging.info(f"Embedding generated in {elapsed_time:.3f} seconds")
+        return embedding
+
+    @observe()
+    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for multiple texts in a single API call.
+
+        Args:
+            texts: List of input texts to embed.
+
+        Returns:
+            List of embeddings in the same order as the input texts.
+        """
+        texts = [t.replace("\n", " ") for t in texts]
+        start_time = time.time()
+        response = self.openai_client.embeddings.create(
+            input=texts,
+            model=self.embedding_model,
+        )
+        elapsed_time = time.time() - start_time
+        logging.info(f"Batch of {len(texts)} embeddings generated in {elapsed_time:.3f} seconds")
+        # response.data is guaranteed to be sorted by index — order is preserved
+        return [item.embedding for item in response.data]
+
+    # ADD — new async embedding method (used only by async search)
+    @observe()
+    async def get_embedding_async(self, text: str) -> List[float]:
+        text = text.replace("\n", " ")
+        start_time = time.time()
+        embedding = (
+            await self.async_openai_client.embeddings.create(
+                input=[text],
+                model=self.embedding_model,
+            )
+        ).data[0].embedding
         elapsed_time = time.time() - start_time
         logging.info(f"Embedding generated in {elapsed_time:.3f} seconds")
         return embedding
@@ -75,7 +120,8 @@ class VectorStore:
             f"Inserted {len(df)} records into {self.vector_settings.table_name}"
         )
 
-    def search(
+    @observe()
+    async def search(
         self,
         query_text: str,
         limit: int = 5,
@@ -123,7 +169,7 @@ class VectorStore:
             Search with time range:
                 vector_store.search("Recent updates", time_range=(datetime(2024, 1, 1), datetime(2024, 1, 31)))
         """
-        query_embedding = self.get_embedding(query_text)
+        query_embedding = await self.get_embedding_async(query_text)
 
         start_time = time.time()
 
@@ -141,9 +187,9 @@ class VectorStore:
             start_date, end_date = time_range
             search_args["uuid_time_filter"] = client.UUIDTimeRange(start_date, end_date)
 
-        results = self.vec_client.search(query_embedding, **search_args)
-        elapsed_time = time.time() - start_time
+        results = await self.async_vec_client.search(query_embedding, **search_args)
 
+        elapsed_time = time.time() - start_time
         logging.info(f"Vector search completed in {elapsed_time:.3f} seconds")
 
         if return_dataframe:
@@ -223,3 +269,35 @@ class VectorStore:
             logging.info(
                 f"Deleted records matching metadata filter from {self.vector_settings.table_name}"
             )
+
+    async def list_documents(self) -> List[dict]:
+        """List all unique documents ingested into the vector store.
+
+        Runs a raw SQL query to group chunks by filename and count them.
+        The timescale_vector client doesn't expose a list/group-by API,
+        so we use psycopg directly — it's already installed.
+
+        Returns:
+            A list of dicts with filename, file_type, and chunk_count.
+        """
+        import psycopg
+
+        query = f"""
+            SELECT
+                metadata->>'filename'  AS filename,
+                metadata->>'file_type' AS file_type,
+                COUNT(*)               AS chunk_count
+            FROM {self.vector_settings.table_name}
+            GROUP BY metadata->>'filename', metadata->>'file_type'
+            ORDER BY filename;
+        """
+
+        async with await psycopg.AsyncConnection.connect(self.settings.database.service_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query)
+                rows = await cur.fetchall()
+
+        return [
+            {"filename": row[0], "file_type": row[1], "chunk_count": row[2]}
+            for row in rows
+        ]

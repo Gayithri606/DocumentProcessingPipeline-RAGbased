@@ -7,6 +7,9 @@ from typing import Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+
+
+
 load_dotenv(dotenv_path="./.env")
 
 
@@ -42,10 +45,25 @@ class DatabaseSettings(BaseModel):
 class VectorStoreSettings(BaseModel):
     """Settings for the VectorStore."""
 
-    table_name: str = "embeddings"
+    #table_name: str = "embeddings"
+    table_name: str = "document_embeddings"  # changed to this temporarily for testing
     embedding_dimensions: int = 1536
     time_partition_interval: timedelta = timedelta(days=7)
 
+class ChunkingSettings(BaseModel):
+    """Settings for the HybridChunker."""
+    embedding_model: str = "text-embedding-3-small"  # must match your OpenAI embedding model
+    max_tokens: int = 8191  # text-embedding-3-small supports up to 8191 tokens
+
+class RedisSettings(BaseModel):
+    """Settings for the Redis broker/backend."""
+    url: str = Field(default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+
+class LangfuseSettings(BaseModel):
+    """Settings for Langfuse observability."""
+    public_key: str = Field(default_factory=lambda: os.getenv("LANGFUSE_PUBLIC_KEY", ""))
+    secret_key: str = Field(default_factory=lambda: os.getenv("LANGFUSE_SECRET_KEY", ""))
+    host: str = Field(default_factory=lambda: os.getenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com"))
 
 class Settings(BaseModel):
     """Main settings class combining all sub-settings."""
@@ -53,6 +71,10 @@ class Settings(BaseModel):
     openai: OpenAISettings = Field(default_factory=OpenAISettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     vector_store: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
+    chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)  
+    redis: RedisSettings = Field(default_factory=RedisSettings) 
+    langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
+
 
 
 @lru_cache()

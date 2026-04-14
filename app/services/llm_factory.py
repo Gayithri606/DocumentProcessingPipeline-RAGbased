@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Type
 
 import instructor
 from anthropic import Anthropic
-from openai import OpenAI
+from langfuse.openai import OpenAI,AsyncOpenAI  # Langfuse drop-in replacement for token/cost tracking
 from pydantic import BaseModel
 
 from config.settings import get_settings
@@ -43,3 +43,31 @@ class LLMFactory:
             "messages": messages,
         }
         return self.client.chat.completions.create(**completion_params)
+
+
+# ↓ NEW CLASS — used by FastAPI async route handlers
+class AsyncLLMFactory:
+    """Async LLM factory — used by FastAPI route handlers."""
+
+    def __init__(self, provider: str):
+        self.provider = provider
+        self.settings = getattr(get_settings(), provider)
+        self.client = self._initialize_client()
+
+    def _initialize_client(self) -> Any:
+        if self.provider == "openai":
+            return instructor.from_openai(AsyncOpenAI(api_key=self.settings.api_key))
+        raise ValueError(f"Unsupported provider for async factory: {self.provider}")
+
+    async def create_completion(
+        self, response_model: Type[BaseModel], messages: List[Dict[str, str]], **kwargs
+    ) -> Any:
+        completion_params = {
+            "model": kwargs.get("model", self.settings.default_model),
+            "temperature": kwargs.get("temperature", self.settings.temperature),
+            "max_retries": kwargs.get("max_retries", self.settings.max_retries),
+            "max_tokens": kwargs.get("max_tokens", self.settings.max_tokens),
+            "response_model": response_model,
+            "messages": messages,
+        }
+        return await self.client.chat.completions.create(**completion_params)  # ← await        
