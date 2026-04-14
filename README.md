@@ -1,141 +1,189 @@
-# Building a High-Performance RAG Solution with Pgvectorscale and Python
+# DocumentProcessingPipeline — Production RAG System
 
-This tutorial will guide you through setting up and using `pgvectorscale` with Docker and Python, leveraging OpenAI's powerful `text-embedding-3-small` model for embeddings. You'll learn to build a cutting-edge RAG (Retrieval-Augmented Generation) solution, combining advanced retrieval techniques (including hybrid search) with intelligent answer generation based on the retrieved context. Perfect for AI engineers looking to enhance their projects with state-of-the-art vector search and generation capabilities with the power of PostgreSQL.
+A production-grade **Retrieval-Augmented Generation (RAG)** pipeline that ingests
+PDF and DOCX documents, stores them as searchable vectors, and answers natural-language
+questions by retrieving relevant content and synthesizing answers via GPT-4o.
 
-## YouTube Tutorial
-You can watch the full tutorial here on [YouTube](https://youtu.be/hAdEuDBN57g).
+Built with async-first FastAPI, Celery background jobs, TimescaleDB (pgvectorscale),
+OpenAI embeddings, and full Langfuse observability.
 
-## Pgvectorscale Documentation
+---
 
-For more information about using PostgreSQL as a vector database in AI applications with Timescale, check out these resources:
+## What it does
 
-- [GitHub Repository: pgvectorscale](https://github.com/timescale/pgvectorscale)
-- [Blog Post: PostgreSQL and Pgvector: Now Faster Than Pinecone, 75% Cheaper, and 100% Open Source](https://www.timescale.com/blog/pgvector-is-now-as-fast-as-pinecone-at-75-less-cost/)
-- [Blog Post: RAG Is More Than Just Vector Search](https://www.timescale.com/blog/rag-is-more-than-just-vector-search/)
-- [Blog Post: A Python Library for Using PostgreSQL as a Vector Database in AI Applications](https://www.timescale.com/blog/a-python-library-for-using-postgresql-as-a-vector-database-in-ai-applications/)
+1. **Upload** a PDF or DOCX via the REST API
+2. **Parse** the document using Docling's structure-aware HybridChunker
+3. **Embed** all chunks in a single batched OpenAI API call
+4. **Store** vectors in TimescaleDB (pgvectorscale) with metadata
+5. **Answer** natural-language questions by retrieving the most relevant chunks
+   and synthesizing a response via GPT-4o
+6. **Track** every LLM call, token count, and cost via Langfuse
 
-## Why PostgreSQL?
+---
 
-Using PostgreSQL with pgvectorscale as your vector database offers several key advantages over dedicated vector databases:
+## Tech stack
 
-- PostgreSQL is a robust, open-source database with a rich ecosystem of tools, drivers, and connectors. This ensures transparency, community support, and continuous improvements.
+| Layer | Technology |
+|---|---|
+| Language | Python 3.13 |
+| API | FastAPI + uvicorn |
+| Background jobs | Celery + Redis |
+| Database | TimescaleDB (pgvectorscale) in Docker |
+| Embeddings | OpenAI `text-embedding-3-small` (batched) |
+| LLM | OpenAI `gpt-4o` |
+| Document parsing | Docling |
+| Chunking | Docling HybridChunker + tiktoken |
+| Structured output | instructor |
+| Observability | Langfuse |
 
-- By using PostgreSQL, you can manage both your relational and vector data within a single database. This reduces operational complexity, as there's no need to maintain and synchronize multiple databases.
+---
 
-- Pgvectorscale enhances pgvector with faster search capabilities, higher recall, and efficient time-based filtering. It leverages advanced indexing techniques, such as the DiskANN-inspired index, to significantly speed up Approximate Nearest Neighbor (ANN) searches.
+## Project structure
 
-Pgvectorscale Vector builds on top of [pgvector](https://github.com/pgvector/pgvector), offering improved performance and additional features, making PostgreSQL a powerful and versatile choice for AI applications.
-
-## Prerequisites
-
-- Docker
-- Python 3.7+
-- OpenAI API key
-- PostgreSQL GUI client
-
-## Steps
-
-1. Set up Docker environment
-2. Connect to the database using a PostgreSQL GUI client (I use TablePlus)
-3. Create a Python script to insert document chunks as vectors using OpenAI embeddings
-4. Create a Python function to perform similarity search
-
-## Detailed Instructions
-
-### 1. Set up Docker environment
-
-Create a `docker-compose.yml` file with the following content:
-
-```yaml
-services:
-  timescaledb:
-    image: timescale/timescaledb-ha:pg16
-    container_name: timescaledb
-    environment:
-      - POSTGRES_DB=postgres
-      - POSTGRES_PASSWORD=password
-    ports:
-      - "5432:5432"
-    volumes:
-      - timescaledb_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-volumes:
-  timescaledb_data:
+```
+DocumentProcessingPipeline-RAGbased/
+├── docker/
+│   └── docker-compose.yml       # TimescaleDB + Redis
+├── app/
+│   ├── config/settings.py       # Centralised settings (pydantic)
+│   ├── database/vector_store.py # Sync + async DB and embedding clients
+│   ├── services/
+│   │   ├── document_processor.py
+│   │   ├── chunker.py
+│   │   ├── llm_factory.py       # Sync (Celery) + Async (FastAPI) LLM clients
+│   │   └── synthesizer.py
+│   ├── api/routes/
+│   │   ├── ingest.py            # POST /ingest
+│   │   ├── query.py             # POST /query
+│   │   ├── documents.py         # GET /documents
+│   │   └── jobs.py              # GET /jobs/{job_id}
+│   ├── pipeline.py              # Celery ingestion pipeline
+│   ├── worker.py                # Celery app + task definition
+│   └── main.py                  # FastAPI app entry point
+├── requirements.txt
+├── example.env
+└── .env                         # Not committed — copy from example.env
 ```
 
-Run the Docker container:
+---
+
+## How to run
+
+### Prerequisites
+
+- Docker Desktop
+- Python 3.13
+- OpenAI API key
+- Langfuse account (for observability)
+
+### 1 — Copy and fill in environment variables
 
 ```bash
-docker compose up -d
+cp example.env .env
+# Open .env and fill in your OpenAI and Langfuse keys
 ```
 
-### 2. Connect to the database using a PostgreSQL GUI client
+### 2 — Start Docker (TimescaleDB + Redis)
 
-- Open client
-- Create a new connection with the following details:
-  - Host: localhost
-  - Port: 5432
-  - User: postgres
-  - Password: password
-  - Database: postgres
+```bash
+cd docker && docker-compose up -d
+```
 
-### 3. Create a Python script to insert document chunks as vectors
+### 3 — Install dependencies
 
-See `insert_vectors.py` for the implementation. This script uses OpenAI's `text-embedding-3-small` model to generate embeddings.
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-### 4. Create a Python function to perform similarity search
+### 4 — Start the FastAPI server
 
-See `similarity_search.py` for the implementation. This script also uses OpenAI's `text-embedding-3-small` model for query embedding.
+```bash
+cd app
+python -m uvicorn main:app --port 8888
+```
 
-## Usage
+Swagger UI: **http://127.0.0.1:8888/docs**
 
-1. Create a copy of `example.env` and rename it to `.env`
-2. Open `.env` and fill in your OpenAI API key. Leave the database settings as is
-3. Run the Docker container
-4. Install the required Python packages using `pip install -r requirements.txt`
-5. Execute `insert_vectors.py` to populate the database
-6. Play with `similarity_search.py` to perform similarity searches
+### 5 — Start the Celery worker (separate terminal)
 
-## Using ANN search indexes to speed up queries
+```bash
+cd app
+celery -A worker worker --loglevel=info
+```
 
-Timescale Vector offers indexing options to accelerate similarity queries, particularly beneficial for large vector datasets (10k+ vectors):
+---
 
-1. Supported indexes:
-   - timescale_vector_index (default): A DiskANN-inspired graph index
-   - pgvector's HNSW: Hierarchical Navigable Small World graph index
-   - pgvector's IVFFLAT: Inverted file index
+## API endpoints
 
-2. The DiskANN-inspired index is Timescale's latest offering, providing improved performance. Refer to the [Timescale Vector explainer blog](https://www.timescale.com/blog/pgvector-is-now-as-fast-as-pinecone-at-75-less-cost/) for detailed information and benchmarks.
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/ingest` | Upload a PDF or DOCX — returns a `job_id` instantly |
+| `GET` | `/jobs/{job_id}` | Poll ingestion status (`PENDING / STARTED / SUCCESS / FAILURE`) |
+| `GET` | `/documents` | List all ingested documents with chunk counts |
+| `POST` | `/query` | Ask a question — returns answer + thought process |
 
-For optimal query performance, creating an index on the embedding column is recommended, especially for large vector datasets.
+### Example: ingest a document
 
-## Cosine Similarity in Vector Search
+```bash
+curl -X POST http://127.0.0.1:8888/ingest \
+  -F "file=@yourfile.pdf"
+# Returns: { "job_id": "abc-123", "filename": "yourfile.pdf", ... }
+```
 
-### What is Cosine Similarity?
+### Example: query
 
-Cosine similarity measures the cosine of the angle between two vectors in a multi-dimensional space. It's a measure of orientation rather than magnitude.
+```bash
+curl -X POST http://127.0.0.1:8888/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What are the key findings?", "limit": 5}'
+# Returns: { "answer": "...", "thought_process": [...], "enough_context": true }
+```
 
-- Range: -1 to 1 (for normalized vectors, which is typical in text embeddings)
-- 1: Vectors point in the same direction (most similar)
-- 0: Vectors are orthogonal (unrelated)
-- -1: Vectors point in opposite directions (most dissimilar)
+---
 
-### Cosine Distance
+## Database connection (TablePlus or any Postgres client)
 
-In pgvector, the `<=>` operator computes cosine distance, which is 1 - cosine similarity.
+| Field | Value |
+|---|---|
+| Host | localhost |
+| Port | 5435 |
+| User | postgres |
+| Password | password |
+| Database | postgres |
 
-- Range: 0 to 2
-- 0: Identical vectors (most similar)
-- 1: Orthogonal vectors
-- 2: Opposite vectors (most dissimilar)
+---
 
-### Interpreting Results
+## Key design decisions
 
-When you get results from similarity_search:
+**Two execution paths kept strictly separate**
+The FastAPI path is fully async — embedding calls, DB search, and LLM synthesis are
+all non-blocking. The Celery worker path stays sync — no event loop, no conflicts.
+Each path has its own OpenAI client (`OpenAI` vs `AsyncOpenAI`) and its own
+TimescaleDB client (`client.Sync` vs `client.Async`).
 
-- Lower distance values indicate higher similarity.
-- A distance of 0 would mean exact match (rarely happens with embeddings).
-- Distances closer to 0 indicate high similarity.
-- Distances around 1 suggest little to no similarity.
-- Distances approaching 2 indicate opposite meanings (rare in practice).
+**Batch embeddings**
+All chunks in a document are embedded in a single OpenAI API call
+(`embeddings.create(input=[...all texts...])`) rather than one call per chunk.
+For a 50-chunk document this means 1 round-trip instead of 50.
+
+**Embed contextualised, store raw**
+`chunk.content` (which includes heading context injected by HybridChunker) is sent
+to OpenAI for higher-quality embeddings. `chunk.raw_content` (plain text) is stored
+in the DB and returned to users — clean display without the injected context noise.
+
+**Structure-aware chunking**
+Docling's HybridChunker respects document structure — headings, tables, and lists are
+kept intact rather than being blindly split at token boundaries. This improves
+retrieval quality significantly for real-world documents.
+
+**Langfuse drop-in observability**
+`from langfuse.openai import OpenAI, AsyncOpenAI` replaces the standard OpenAI
+import. Every token count, cost, and latency is tracked automatically with zero
+extra instrumentation code.
+
+**Async-first FastAPI with `asyncio.to_thread` for sync boundaries**
+The two remaining sync operations in the HTTP path — saving the uploaded file to
+disk and polling Redis for job status — are wrapped in `asyncio.to_thread()` so they
+never block the event loop.
