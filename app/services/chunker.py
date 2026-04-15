@@ -23,10 +23,12 @@ class Chunker:
 
     def __init__(self):
         settings = get_settings().chunking
+        self.max_tokens = settings.max_tokens
+        self.chunk_max_tokens = settings.max_tokens - settings.heading_token_reserve
         tiktoken_encoder = tiktoken.encoding_for_model(settings.embedding_model)
         self.tokenizer = OpenAITokenizer(
             tokenizer=tiktoken_encoder,
-            max_tokens=settings.max_tokens,
+            max_tokens=self.chunk_max_tokens,  # leaves headroom for contextualize() headings
         )
         self.chunker = HybridChunker(tokenizer=self.tokenizer)
 
@@ -51,6 +53,19 @@ class Chunker:
         for i, chunk in enumerate(raw_chunks):
             raw_text = chunk.text
             contextualized_text = self.chunker.contextualize(chunk=chunk)
+
+            # Safety net: heading_token_reserve should prevent this from ever
+            # firing, but if headings are unusually long and still push past
+            # the limit, fall back to raw text rather than truncating — the
+            # full chunk content is always preserved this way.
+            contextualized_token_count_raw = len(self.tokenizer.tokenizer.encode(contextualized_text))
+            if contextualized_token_count_raw > self.max_tokens:
+                logging.warning(
+                    f"Chunk {i}: contextualized text ({contextualized_token_count_raw} tokens) "
+                    f"exceeds limit ({self.max_tokens}) despite reserve — "
+                    f"falling back to raw text for embedding"
+                )
+                contextualized_text = raw_text
 
             raw_token_count = len(self.tokenizer.tokenizer.encode(raw_text))
             contextualized_token_count = len(self.tokenizer.tokenizer.encode(contextualized_text))

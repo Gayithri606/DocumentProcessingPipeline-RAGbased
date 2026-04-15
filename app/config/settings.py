@@ -54,6 +54,7 @@ class ChunkingSettings(BaseModel):
     """Settings for the HybridChunker."""
     embedding_model: str = "text-embedding-3-small"  # must match your OpenAI embedding model
     max_tokens: int = 8191  # text-embedding-3-small supports up to 8191 tokens
+    heading_token_reserve: int = 512  # headroom reserved for contextualize() heading prefix
 
 class RedisSettings(BaseModel):
     """Settings for the Redis broker/backend."""
