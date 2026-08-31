@@ -21,6 +21,29 @@ OpenAI embeddings, and full Langfuse observability.
 
 ---
 
+## See it working
+
+**Upload returns immediately.** The API hands back a `job_id` so the server never blocks on ingestion.
+
+![Uploading a PDF](docs/blog/posts/images/01-ingest-upload.png)
+![Ingestion job succeeded](docs/blog/posts/images/02-ingest-job-success.png)
+
+**Ask a question.** The answer comes back with the model's thought process and an `enough_context` flag.
+
+![A grounded answer](docs/blog/posts/images/04-query-good-answer.png)
+
+**When the answer isn't in the documents, it says so instead of inventing one.**
+
+![Not enough context](docs/blog/posts/images/06-query-not-enough-context.png)
+
+**Bad input is handled, not crashed.**
+
+![Wrong file type rejected](docs/blog/posts/images/07-ingest-wrong-filetype.png)
+![Empty question rejected](docs/blog/posts/images/08-query-empty-question.png)
+
+---
+
+
 ## Tech stack
 
 | Layer | Technology |
