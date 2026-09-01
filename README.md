@@ -210,3 +210,31 @@ extra instrumentation code.
 The two remaining sync operations in the HTTP path — saving the uploaded file to
 disk and polling Redis for job status — are wrapped in `asyncio.to_thread()` so they
 never block the event loop.
+
+---
+
+## What "production-grade" means here
+
+This is a reference implementation, not a deployed service. The phrase describes the
+engineering patterns it uses, not uptime in front of real users.
+
+**Built in:**
+
+- Fully async request path — embedding, vector search, and synthesis never block the event loop
+- Background ingestion through Celery and Redis, so uploads return a `job_id` instantly
+- Langfuse tracing on every LLM call, added from the first commit rather than retrofitted
+- Typed, env-driven settings with no hardcoded configuration
+- Schema-validated LLM output via Instructor and Pydantic, with automatic retries on malformed responses
+- Graceful degradation in two places: an `enough_context` flag so the system declines instead of guessing, and a chunker that falls back to raw text rather than truncating when headings overflow the token budget
+- Sync and async execution paths kept strictly separate, each with its own clients
+
+**Not yet:**
+
+- No automated test suite
+- No CI pipeline
+- Dependencies are unpinned in `requirements.txt`
+- Responses don't carry source attribution back to the originating document
+
+Those four are the next work on this repo.
+
+---
