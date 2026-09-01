@@ -18,8 +18,8 @@ class SynthesizedResponse(BaseModel):
 class Synthesizer:
     SYSTEM_PROMPT = """
     # Role and Purpose
-    You are an AI assistant for an e-commerce FAQ system. Your task is to synthesize a coherent and helpful answer 
-    based on the given question and relevant context retrieved from a knowledge database.
+    You are an AI assistant for a document question-answering system. Your task is to synthesize a coherent and helpful answer 
+    based on the given question and relevant context retrieved from a document knowledge base.
 
     # Guidelines:
     1. Provide a clear and concise answer to the question.
