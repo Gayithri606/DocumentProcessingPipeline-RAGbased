@@ -1,4 +1,5 @@
 # DocumentProcessingPipeline — Production RAG System
+**Status:** Complete · Portfolio project
 
 A production-grade **Retrieval-Augmented Generation (RAG)** pipeline that ingests
 PDF and DOCX documents, stores them as searchable vectors, and answers natural-language
